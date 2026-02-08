@@ -58,9 +58,15 @@ export class SqlStorage implements TransactionStorage {
       txns,
     );
 
+    const connUrl = new URL(sqlConfig.connectionString);
     const pool = new Pool({
-      connectionString: sqlConfig.connectionString,
+      host: connUrl.hostname,
+      port: Number(connUrl.port) || 5432,
+      user: decodeURIComponent(connUrl.username),
+      password: decodeURIComponent(connUrl.password),
+      database: connUrl.pathname.slice(1),
       max: 1,
+      ssl: { rejectUnauthorized: false },
     });
     const client = await pool.connect();
     try {
