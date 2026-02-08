@@ -1,5 +1,4 @@
 {
-  
   "accounts": [
     {
       "companyId": "yahav",
@@ -17,19 +16,9 @@
     "sql": {
       "connectionString": "postgresql://postgres.lzqkcbdhqngyviatwsnn:Ma060167244%21@aws-1-eu-central-1.pooler.supabase.com:5432/postgres",
       "schema": "moneyman"
-    },
-    
+    }
   },
   "options": {
-    "scraping": {
-    
-    },
-    "logging": {
-    
-    },
-    "security": {
-    
-    },
     "notifications": {
       "telegram": {
         "apiKey": "8410690659:AAEI_3Cu3n2O9v0g_FjXq1xnF4n-qrQzUCI",
@@ -37,6 +26,6 @@
         "enableOtp": false,
         "otpTimeoutSeconds": 300
       }
-    },
-  },
+    }
+  }
 }
