@@ -1,0 +1,109 @@
+diff --git a/node_modules/israeli-bank-scrapers/lib/helpers/fetch.js b/node_modules/israeli-bank-scrapers/lib/helpers/fetch.js
+index 9252ba4..3aa8c10 100644
+--- a/node_modules/israeli-bank-scrapers/lib/helpers/fetch.js
++++ b/node_modules/israeli-bank-scrapers/lib/helpers/fetch.js
+@@ -11,6 +11,13 @@ exports.fetchPostWithinPage = fetchPostWithinPage;
+ var _nodeFetch = _interopRequireDefault(require("node-fetch"));
+ function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
+ const JSON_CONTENT_TYPE = 'application/json';
++function assertAutomationNotBlocked(status, responseText, url) {
++  if (status === 429 || (responseText && /block automation|bot detection/i.test(responseText))) {
++    throw new Error(
++      `Automation detected and blocked by server. Status: ${status}, URL: ${url}. Consider adding longer delays or running at different times.`
++    );
++  }
++}
+ function getJsonHeaders() {
+   return {
+     Accept: JSON_CONTENT_TYPE,
+@@ -70,6 +77,9 @@ async function fetchGetWithinPage(page, url, ignoreErrors = false) {
+       throw new Error(`fetchGetWithinPage error: ${e instanceof Error ? `${e.message}\n${e.stack}` : String(e)}, url: ${innerUrl}, status: ${response?.status}`);
+     }
+   }, url);
++  if (!ignoreErrors) {
++    assertAutomationNotBlocked(status, result, url);
++  }
+   if (result !== null) {
+     try {
+       return JSON.parse(result);
+@@ -93,17 +103,21 @@ async function fetchPostWithinPage(page, url, data, extraHeaders = {}, ignoreErr
+       }, innerExtraHeaders)
+     });
+     if (response.status === 204) {
+-      return null;
++      return [null, response.status];
+     }
+-    return response.text();
++    return [await response.text(), response.status];
+   }, url, data, extraHeaders);
++  const [resultText, status] = Array.isArray(result) ? result : [result, 200];
++  if (!ignoreErrors) {
++    assertAutomationNotBlocked(status, resultText, url);
++  }
+   try {
+-    if (result !== null) {
+-      return JSON.parse(result);
++    if (resultText !== null) {
++      return JSON.parse(resultText);
+     }
+   } catch (e) {
+     if (!ignoreErrors) {
+-      throw new Error(`fetchPostWithinPage parse error: ${e instanceof Error ? `${e.message}\n${e.stack}` : String(e)}, url: ${url}, data: ${JSON.stringify(data)}, extraHeaders: ${JSON.stringify(extraHeaders)}, result: ${result}`);
++      throw new Error(`fetchPostWithinPage parse error: ${e instanceof Error ? `${e.message}\n${e.stack}` : String(e)}, url: ${url}, data: ${JSON.stringify(data)}, extraHeaders: ${JSON.stringify(extraHeaders)}, result: ${resultText}`);
+     }
+   }
+   return null;
+diff --git a/node_modules/israeli-bank-scrapers/lib/scrapers/base-isracard-amex.js b/node_modules/israeli-bank-scrapers/lib/scrapers/base-isracard-amex.js
+index c1a1f32..0986677 100644
+--- a/node_modules/israeli-bank-scrapers/lib/scrapers/base-isracard-amex.js
++++ b/node_modules/israeli-bank-scrapers/lib/scrapers/base-isracard-amex.js
+@@ -17,9 +17,14 @@ var _transactions2 = require("../transactions");
+ var _baseScraperWithBrowser = require("./base-scraper-with-browser");
+ var _errors = require("./errors");
+ var _browser = require("../helpers/browser");
++var _elementsInteractions = require("../helpers/elements-interactions");
+ function _interopRequireDefault(e) { return e && e.__esModule ? e : { default: e }; }
++function randomDelay(min, max) {
++  const delay = Math.floor(Math.random() * (max - min + 1)) + min;
++  return new Promise(resolve => setTimeout(resolve, delay));
++}
+ const RATE_LIMIT = {
+-  SLEEP_BETWEEN: 1000,
++  SLEEP_BETWEEN: 2500,
+   TRANSACTIONS_BATCH_SIZE: 10
+ };
+ const COUNTRY_CODE = '212';
+@@ -39,6 +44,7 @@ function getAccountsUrl(servicesUrl, monthMoment) {
+ async function fetchAccounts(page, servicesUrl, monthMoment) {
+   const dataUrl = getAccountsUrl(servicesUrl, monthMoment);
+   debug(`fetching accounts from ${dataUrl}`);
++  await randomDelay(RATE_LIMIT.SLEEP_BETWEEN, RATE_LIMIT.SLEEP_BETWEEN + 500);
+   const dataResult = await (0, _fetch.fetchGetWithinPage)(page, dataUrl);
+   if (dataResult && _lodash.default.get(dataResult, 'Header.Status') === '1' && dataResult.DashboardMonthBean) {
+     const {
+@@ -119,7 +125,7 @@ function convertTransactions(txns, processedDate, options) {
+ async function fetchTransactions(page, options, companyServiceOptions, startMoment, monthMoment) {
+   const accounts = await fetchAccounts(page, companyServiceOptions.servicesUrl, monthMoment);
+   const dataUrl = getTransactionsUrl(companyServiceOptions.servicesUrl, monthMoment);
+-  await (0, _waiting.sleep)(RATE_LIMIT.SLEEP_BETWEEN);
++  await randomDelay(RATE_LIMIT.SLEEP_BETWEEN, RATE_LIMIT.SLEEP_BETWEEN + 500);
+   debug(`fetching transactions from ${dataUrl} for month ${monthMoment.format('YYYY-MM')}`);
+   const dataResult = await (0, _fetch.fetchGetWithinPage)(page, dataUrl);
+   if (dataResult && _lodash.default.get(dataResult, 'Header.Status') === '1' && dataResult.CardsTransactionsListBean) {
+@@ -250,6 +256,16 @@ class IsracardAmexBaseScraper extends _baseScraperWithBrowser.BaseScraperWithBro
+     await (0, _browser.maskHeadlessUserAgent)(this.page);
+     await this.navigateTo(`${this.baseUrl}/personalarea/Login`);
+     this.emitProgress(_definitions.ScraperProgressTypes.LoggingIn);
++    try {
++      await (0, _elementsInteractions.waitUntilElementFound)(this.page, '#flip', true, 10000);
++      debug('clicking "Enter with password" button (#flip)');
++      await (0, _elementsInteractions.clickButton)(this.page, '#flip');
++      debug('waiting for password login panel');
++      await (0, _elementsInteractions.waitUntilElementFound)(this.page, '#otpLoginPwd', true, 10000);
++      await randomDelay(1000, 2000);
++    } catch (e) {
++      debug('flip button not found or already on password login, continuing with API login');
++    }
+     const validateUrl = `${this.servicesUrl}?reqName=ValidateIdData`;
+     const validateRequest = {
+       id: credentials.id,
